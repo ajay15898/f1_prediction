@@ -53,29 +53,6 @@ def normalize_race_name(name: str) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def get_team_seasons(team: str) -> List[int]:
-    df = fetch_openf1(
-        "results",
-        {
-            "team_name": team,
-            "session_name": "Race",
-            "limit": 5000,
-        },
-    )
-    if df.empty or "season" not in df.columns:
-        return []
-
-    seasons = (
-        pd.to_numeric(df["season"], errors="coerce")
-        .dropna()
-        .astype(int)
-        .unique()
-        .tolist()
-    )
-    return sorted(seasons)
-
-
-@st.cache_data(show_spinner=False)
 def get_team_results(season: int, team: str) -> pd.DataFrame:
     df = fetch_openf1(
         "results",
@@ -606,7 +583,17 @@ def render_driver_summary(summary: pd.DataFrame, drivers: List[str]) -> None:
             st.metric("DNF Rate", f"{dnf_rate * 100:.1f}%")
 
 
-def build_driver_race_filters(results: pd.DataFrame) -> Tuple[List[str], List[str]]:
+def build_sidebar(results: pd.DataFrame) -> Tuple[int, List[str], List[str]]:
+    st.sidebar.header("Filters")
+    available_seasons = list(range(2018, DEFAULT_SEASON + 1))
+    season = st.sidebar.selectbox(
+        "Season",
+        options=available_seasons,
+        index=available_seasons.index(DEFAULT_SEASON)
+        if DEFAULT_SEASON in available_seasons
+        else len(available_seasons) - 1,
+    )
+
     driver_options: List[str] = []
     format_func = None
     if not results.empty:
@@ -624,22 +611,11 @@ def build_driver_race_filters(results: pd.DataFrame) -> Tuple[List[str], List[st
             driver_options = sorted(results["driver_code"].dropna().unique().tolist())
         elif "driver_name" in results.columns:
             driver_options = sorted(results["driver_name"].dropna().unique().tolist())
-
-    driver_key = "driver_filters"
-    if driver_options:
-        st.session_state[driver_key] = [
-            code
-            for code in st.session_state.get(driver_key, driver_options)
-            if code in driver_options
-        ]
-    else:
-        st.session_state[driver_key] = []
     selected_drivers = st.sidebar.multiselect(
         "Drivers",
         options=driver_options,
         default=driver_options,
         format_func=format_func,
-        key=driver_key,
     )
 
     race_options: List[str] = []
@@ -647,23 +623,12 @@ def build_driver_race_filters(results: pd.DataFrame) -> Tuple[List[str], List[st
         race_options = (
             results.sort_values("round")["race_label"].dropna().unique().tolist()
         )
-
-    race_key = "race_filters"
-    if race_options:
-        st.session_state[race_key] = [
-            race
-            for race in st.session_state.get(race_key, race_options)
-            if race in race_options
-        ]
-    else:
-        st.session_state[race_key] = []
     selected_races = st.sidebar.multiselect(
         "Races",
         options=race_options,
         default=race_options,
-        key=race_key,
     )
-    return selected_drivers, selected_races
+    return season, selected_drivers, selected_races
 
 
 def main() -> None:
@@ -672,59 +637,13 @@ def main() -> None:
         "OpenF1 results combined with FastF1 telemetry to unpack Ferrari's race weekends."
     )
 
-    if "season_notice" in st.session_state:
-        st.info(st.session_state.pop("season_notice"))
-
-    available_seasons = get_team_seasons(TEAM_NAME)
-    if not available_seasons:
-        probe_years = list(range(DEFAULT_SEASON, max(DEFAULT_SEASON - 6, 2014), -1))
-        fallback_years: List[int] = []
-        for year in probe_years:
-            results = get_team_results(year, TEAM_NAME)
-            if not results.empty:
-                fallback_years.append(year)
-        available_seasons = sorted(set(fallback_years))
-
-    available_seasons = sorted({*available_seasons, DEFAULT_SEASON})
-    if not available_seasons:
-        available_seasons = [DEFAULT_SEASON]
-
-    default_season = (
-        DEFAULT_SEASON if DEFAULT_SEASON in available_seasons else available_seasons[-1]
-    )
-    season_key = "season_selection"
-    if season_key not in st.session_state:
-        st.session_state[season_key] = default_season
-
-    st.sidebar.header("Filters")
-    season = st.sidebar.selectbox(
-        "Season",
-        options=available_seasons,
-        key=season_key,
-    )
+    initial_results = get_team_results(DEFAULT_SEASON, TEAM_NAME)
+    season, driver_filters, race_filters = build_sidebar(initial_results)
 
     results = get_team_results(season, TEAM_NAME)
     if results.empty:
-        fallback_season: Optional[int] = None
-        for candidate in reversed(available_seasons):
-            if candidate == season:
-                continue
-            candidate_results = get_team_results(candidate, TEAM_NAME)
-            if not candidate_results.empty:
-                fallback_season = candidate
-                break
-
-        if fallback_season is not None:
-            st.session_state["season_notice"] = (
-                f"No OpenF1 results available for {season}. Showing {fallback_season} instead."
-            )
-            st.session_state[season_key] = fallback_season
-            st.experimental_rerun()
-
         st.error("No OpenF1 results available for the selected season.")
-        st.stop()
-
-    driver_filters, race_filters = build_driver_race_filters(results)
+        return
 
     drivers = driver_filters or (
         results["driver_code"].dropna().unique().tolist()
