@@ -53,76 +53,6 @@ def normalize_race_name(name: str) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def get_team_seasons(
-    team: str,
-    start_year: int = 2018,
-    end_year: Optional[int] = None,
-) -> List[int]:
-    """Discover seasons with available race results for the given team."""
-    if end_year is None:
-        end_year = max(DEFAULT_SEASON, pd.Timestamp.utcnow().year)
-
-    df = fetch_openf1(
-        "results",
-        {
-            "team_name": team,
-            "session_name": "Race",
-            "date_start": f"{start_year}-01-01",
-            "date_end": f"{end_year}-12-31",
-            "limit": 2000,
-        },
-    )
-    if df.empty or "season" not in df.columns:
-        return sorted({DEFAULT_SEASON})
-
-    seasons = {
-        int(season)
-        for season in pd.to_numeric(df["season"], errors="coerce").dropna().astype(int)
-    }
-    seasons.add(DEFAULT_SEASON)
-    return sorted(seasons)
-
-
-@st.cache_data(show_spinner=False)
-def find_latest_season_with_results(
-    requested_season: int,
-    team: str,
-    seasons: Optional[Iterable[int]] = None,
-) -> Tuple[int, pd.DataFrame]:
-    """Return the most recent season (<= requested) that has available results."""
-
-    season_pool = sorted({*seasons} if seasons else set())
-    if not season_pool:
-        season_pool = list(range(requested_season, 2017, -1))
-
-    min_year = min(season_pool) if season_pool else 2018
-    search_years: List[int] = []
-
-    for year in range(requested_season, min_year - 1, -1):
-        search_years.append(year)
-
-    for year in sorted(season_pool, reverse=True):
-        if year > requested_season:
-            search_years.append(year)
-        elif year not in search_years:
-            search_years.append(year)
-
-    seen: set[int] = set()
-    ordered_years: List[int] = []
-    for year in search_years:
-        if year not in seen:
-            ordered_years.append(year)
-            seen.add(year)
-
-    for year in ordered_years:
-        results = get_team_results(year, team)
-        if not results.empty:
-            return year, results
-
-    return requested_season, pd.DataFrame()
-
-
-@st.cache_data(show_spinner=False)
 def get_team_results(season: int, team: str) -> pd.DataFrame:
     df = fetch_openf1(
         "results",
@@ -653,7 +583,17 @@ def render_driver_summary(summary: pd.DataFrame, drivers: List[str]) -> None:
             st.metric("DNF Rate", f"{dnf_rate * 100:.1f}%")
 
 
-def build_driver_race_filters(results: pd.DataFrame) -> Tuple[List[str], List[str]]:
+def build_sidebar(results: pd.DataFrame) -> Tuple[int, List[str], List[str]]:
+    st.sidebar.header("Filters")
+    available_seasons = list(range(2018, DEFAULT_SEASON + 1))
+    season = st.sidebar.selectbox(
+        "Season",
+        options=available_seasons,
+        index=available_seasons.index(DEFAULT_SEASON)
+        if DEFAULT_SEASON in available_seasons
+        else len(available_seasons) - 1,
+    )
+
     driver_options: List[str] = []
     format_func = None
     if not results.empty:
@@ -671,13 +611,11 @@ def build_driver_race_filters(results: pd.DataFrame) -> Tuple[List[str], List[st
             driver_options = sorted(results["driver_code"].dropna().unique().tolist())
         elif "driver_name" in results.columns:
             driver_options = sorted(results["driver_name"].dropna().unique().tolist())
-
     selected_drivers = st.sidebar.multiselect(
         "Drivers",
         options=driver_options,
         default=driver_options,
         format_func=format_func,
-        key="driver_filters",
     )
 
     race_options: List[str] = []
@@ -685,19 +623,12 @@ def build_driver_race_filters(results: pd.DataFrame) -> Tuple[List[str], List[st
         race_options = (
             results.sort_values("round")["race_label"].dropna().unique().tolist()
         )
-
     selected_races = st.sidebar.multiselect(
         "Races",
         options=race_options,
         default=race_options,
-        key="race_filters",
     )
-
-    if not selected_drivers:
-        selected_drivers = driver_options
-    if not selected_races:
-        selected_races = race_options
-    return selected_drivers, selected_races
+    return season, selected_drivers, selected_races
 
 
 def main() -> None:
@@ -706,46 +637,13 @@ def main() -> None:
         "OpenF1 results combined with FastF1 telemetry to unpack Ferrari's race weekends."
     )
 
-    available_seasons = get_team_seasons(TEAM_NAME)
-    if not available_seasons:
-        available_seasons = [DEFAULT_SEASON]
+    initial_results = get_team_results(DEFAULT_SEASON, TEAM_NAME)
+    season, driver_filters, race_filters = build_sidebar(initial_results)
 
-    season_options = sorted(set(available_seasons))
-    if DEFAULT_SEASON not in season_options:
-        season_options.append(DEFAULT_SEASON)
-    season_options = sorted(season_options)
-
-    default_index = (
-        season_options.index(DEFAULT_SEASON)
-        if DEFAULT_SEASON in season_options
-        else len(season_options) - 1
-    )
-
-    st.sidebar.header("Filters")
-    requested_season = st.sidebar.selectbox(
-        "Season",
-        options=season_options,
-        index=default_index,
-        key="season_selection",
-    )
-
-    active_season, results = find_latest_season_with_results(
-        requested_season,
-        TEAM_NAME,
-        season_options,
-    )
+    results = get_team_results(season, TEAM_NAME)
     if results.empty:
         st.error("No OpenF1 results available for the selected season.")
-        st.stop()
-
-    if active_season != requested_season:
-        st.info(
-            f"No OpenF1 results available for {requested_season}. Displaying {active_season} instead."
-        )
-
-    st.markdown(f"### Season {active_season}")
-
-    driver_filters, race_filters = build_driver_race_filters(results)
+        return
 
     drivers = driver_filters or (
         results["driver_code"].dropna().unique().tolist()
@@ -755,12 +653,12 @@ def main() -> None:
     races = race_filters or results["race_label"].dropna().unique().tolist()
 
     filtered_results = filter_results(results, drivers, races)
-    pitstops = get_team_pitstops(active_season, TEAM_NAME)
+    pitstops = get_team_pitstops(season, TEAM_NAME)
     if not pitstops.empty:
         pitstops = pitstops[pitstops["race_slug"].isin(filtered_results["race_slug"].unique())]
 
     fastf1_metrics = get_fastf1_metrics(
-        active_season,
+        season,
         filtered_results,
         drivers,
     )
