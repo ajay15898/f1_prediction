@@ -1,1 +1,7 @@
-﻿streamlit\nfastf1\nplotly\npandas\nnumpy
+streamlit
+fastf1
+plotly
+pandas
+numpy
+requests
+scikit-learn
