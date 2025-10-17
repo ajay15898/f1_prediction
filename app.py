@@ -20,7 +20,7 @@ fastf1.Cache.enable_cache(str(CACHE_PATH))
 
 OPENF1_BASE = "https://api.openf1.org/v1"
 TEAM_NAME = "Ferrari"
-DEFAULT_SEASON = 2024
+DEFAULT_SEASON = 2025
 
 
 st.set_page_config(
