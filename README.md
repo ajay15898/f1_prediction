@@ -16,4 +16,4 @@ This Streamlit application analyzes the current Formula 1 season for Ferrari by 
    make run
    ```
 
-FastF1 telemetry is cached to `./f1cache` on first run to speed up subsequent loads. By default the dashboard opens on the 2025 Formula 1 season, but you can switch to any supported season, driver, or race via the sidebar filters.
+FastF1 telemetry is cached to `./f1cache` on first run to speed up subsequent loads. By default the dashboard opens on the 2025 Formula 1 season, but you can switch to any supported season, driver, or race via the sidebar filters. When OpenF1 has not yet published race results for the selected season, the app automatically falls back to the most recent season with data and lets you know about the change.
