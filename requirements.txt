@@ -1,0 +1,1 @@
+﻿streamlit\nfastf1\nplotly\npandas\nnumpy
