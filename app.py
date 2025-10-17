@@ -59,6 +59,7 @@ def get_team_seasons(team: str) -> List[int]:
         {
             "team_name": team,
             "session_name": "Race",
+            "limit": 5000,
         },
     )
     if df.empty or "season" not in df.columns:
@@ -675,6 +676,15 @@ def main() -> None:
         st.info(st.session_state.pop("season_notice"))
 
     available_seasons = get_team_seasons(TEAM_NAME)
+    if not available_seasons:
+        probe_years = list(range(DEFAULT_SEASON, max(DEFAULT_SEASON - 6, 2014), -1))
+        fallback_years: List[int] = []
+        for year in probe_years:
+            results = get_team_results(year, TEAM_NAME)
+            if not results.empty:
+                fallback_years.append(year)
+        available_seasons = sorted(set(fallback_years))
+
     available_seasons = sorted({*available_seasons, DEFAULT_SEASON})
     if not available_seasons:
         available_seasons = [DEFAULT_SEASON]
